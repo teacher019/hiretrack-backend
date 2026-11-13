@@ -1,6 +1,5 @@
 ﻿from rest_framework import serializers
-from .models import JobApplication, Attachment, FollowUp
-
+from .models import JobApplication, Attachment, FollowUp, Notification
 
 class JobApplicationSerializer(serializers.ModelSerializer):
 
@@ -77,3 +76,49 @@ class FollowUpSerializer(serializers.ModelSerializer):
             )
 
         return value
+class NotificationSerializer(serializers.ModelSerializer):
+    application_id = serializers.IntegerField(
+        source="follow_up.application_id",
+        read_only=True
+    )
+
+    company = serializers.CharField(
+        source="follow_up.application.company",
+        read_only=True
+    )
+
+    role = serializers.CharField(
+        source="follow_up.application.role",
+        read_only=True
+    )
+
+    follow_up_date = serializers.DateField(
+        source="follow_up.follow_up_date",
+        read_only=True
+    )
+
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "follow_up",
+            "application_id",
+            "company",
+            "role",
+            "follow_up_date",
+            "title",
+            "message",
+            "notification_type",
+            "is_read",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = (
+            "user",
+            "follow_up",
+            "title",
+            "message",
+            "notification_type",
+            "created_at",
+            "updated_at",
+        )

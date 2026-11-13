@@ -8,9 +8,15 @@ from django.urls import reverse
 
 from rest_framework.test import APIClient
 
-from .models import JobApplication, Attachment
+from .models import (
+    JobApplication,
+    Attachment,
+    FollowUp,
+    Notification,
+)
 
-
+from datetime import timedelta
+from django.utils import timezone
 class HireTrackFileAPITests(TestCase):
 
     def setUp(self):
@@ -47,7 +53,8 @@ class HireTrackFileAPITests(TestCase):
             role="Designer",
             legacy_id="test-application-2"
         )
-
+        self.upcoming_date = timezone.localdate() + timedelta(days=8)
+        self.overdue_date = timezone.localdate() - timedelta(days=2)
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
@@ -360,3 +367,197 @@ class ApplicationCoverLetterReplacementAPITests(
             Path(self.application.cover_letter_file.path).exists()
         )
         self.assertTrue(self.old_resume_path.exists())
+
+class NotificationAPITests(TestCase):
+
+    def setUp(self):
+        User = get_user_model()
+
+        self.user = User.objects.create_user(
+            username="notificationuser",
+            password="testpass123"
+        )
+
+        self.other_user = User.objects.create_user(
+            username="othernotificationuser",
+            password="testpass123"
+        )
+        self.upcoming_date = timezone.localdate() + timedelta(days=8)
+        self.overdue_date = timezone.localdate() - timedelta(days=2)
+        self.application = JobApplication.objects.create(
+            user=self.user,
+            candidate_name="Notification Candidate",
+            company="Notification Test Company",
+            role="Developer",
+            legacy_id="notification-test-application"
+        )
+
+        self.other_application = JobApplication.objects.create(
+            user=self.other_user,
+            candidate_name="Other Candidate",
+            company="Other Notification Company",
+            role="Designer",
+            legacy_id="other-notification-application"
+        )
+
+        self.follow_up = FollowUp.objects.create(
+            application=self.application,
+            follow_up_date=self.upcoming_date
+        )
+
+        self.other_follow_up = FollowUp.objects.create(
+            application=self.other_application,
+            follow_up_date=self.upcoming_date
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_sync_creates_upcoming_notification(self):
+        response = self.client.post(
+            reverse("notification-sync")
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        notification = Notification.objects.get(
+            follow_up=self.follow_up
+        )
+
+        self.assertEqual(
+            notification.notification_type,
+            "upcoming"
+        )
+        self.assertFalse(notification.is_read)
+
+    def test_sync_creates_overdue_notification(self):
+        self.follow_up.follow_up_date = self.overdue_date
+        self.follow_up.save()
+
+        response = self.client.post(
+            reverse("notification-sync")
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        notification = Notification.objects.get(
+            follow_up=self.follow_up
+        )
+
+        self.assertEqual(
+            notification.notification_type,
+            "overdue"
+        )
+
+    def test_sync_does_not_create_duplicate_notifications(self):
+        self.client.post(reverse("notification-sync"))
+        self.client.post(reverse("notification-sync"))
+
+        self.assertEqual(
+            Notification.objects.filter(
+                user=self.user
+            ).count(),
+            1
+        )
+
+    def test_sync_removes_completed_follow_up_notification(self):
+        self.client.post(reverse("notification-sync"))
+
+        self.follow_up.completed = True
+        self.follow_up.save()
+
+        response = self.client.post(
+            reverse("notification-sync")
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.assertFalse(
+            Notification.objects.filter(
+                follow_up=self.follow_up
+            ).exists()
+        )
+
+    def test_user_can_mark_notification_as_read(self):
+        self.client.post(reverse("notification-sync"))
+
+        notification = Notification.objects.get(
+            follow_up=self.follow_up
+        )
+
+        response = self.client.patch(
+            reverse(
+                "notification-read",
+                args=[notification.id]
+            ),
+            {"is_read": True},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_read)
+
+    def test_user_can_mark_notification_as_unread(self):
+        self.client.post(reverse("notification-sync"))
+
+        notification = Notification.objects.get(
+            follow_up=self.follow_up
+        )
+
+        notification.is_read = True
+        notification.save()
+
+        response = self.client.patch(
+            reverse(
+                "notification-read",
+                args=[notification.id]
+            ),
+            {"is_read": False},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_read)
+
+    def test_user_cannot_see_another_users_notifications(self):
+        Notification.objects.create(
+            user=self.other_user,
+            follow_up=self.other_follow_up,
+            title="Private Notification",
+            message="Private message",
+            notification_type="upcoming"
+        )
+
+        response = self.client.get(
+            reverse("notification-list")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 0)
+
+    def test_user_cannot_mark_another_users_notification_as_read(self):
+        other_notification = Notification.objects.create(
+            user=self.other_user,
+            follow_up=self.other_follow_up,
+            title="Private Notification",
+            message="Private message",
+            notification_type="upcoming"
+        )
+
+        response = self.client.patch(
+            reverse(
+                "notification-read",
+                args=[other_notification.id]
+            ),
+            {"is_read": True},
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+        other_notification.refresh_from_db()
+        self.assertFalse(other_notification.is_read)

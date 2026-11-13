@@ -138,3 +138,38 @@ def delete_application_files(sender, instance, **kwargs):
 
         if file_name and file_storage.exists(file_name):
             file_storage.delete(file_name)
+
+class Notification(models.Model):
+
+    NOTIFICATION_TYPE_CHOICES = [
+        ("upcoming", "Upcoming"),
+        ("overdue", "Overdue"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications"
+    )
+
+    follow_up = models.OneToOneField(
+        FollowUp,
+        on_delete=models.CASCADE,
+        related_name="notification"
+    )
+
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+
+    notification_type = models.CharField(
+        max_length=20,
+        choices=NOTIFICATION_TYPE_CHOICES
+    )
+
+    is_read = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.title} - {self.user}"

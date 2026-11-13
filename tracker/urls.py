@@ -4,6 +4,7 @@ from .views import (
     JobApplicationViewSet,
     AttachmentViewSet,
     FollowUpViewSet,
+    NotificationViewSet,
 )
 
 router = DefaultRouter()
@@ -24,6 +25,12 @@ router.register(
     "followups",
     FollowUpViewSet,
     basename="followup"
+)
+
+router.register(
+    "notifications",
+    NotificationViewSet,
+    basename="notification"
 )
 
 urlpatterns = router.urls
