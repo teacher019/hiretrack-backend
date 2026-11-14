@@ -45,3 +45,6 @@ security-test*.txt
 # Local backup files
 *.bak
 *backup*.py
+
+# Collected static files
+staticfiles/

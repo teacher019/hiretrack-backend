@@ -1,7 +1,11 @@
-﻿from django.utils import timezone
+﻿import mimetypes
+
+from django.utils import timezone
+from django.http import FileResponse
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -12,6 +16,29 @@ from .serializers import (
     FollowUpSerializer,
     NotificationSerializer,
 )
+
+
+def download_file_response(file_field):
+    if not file_field or not file_field.name:
+        raise NotFound("File not found.")
+
+    storage = file_field.storage
+    file_name = file_field.name
+
+    if not storage.exists(file_name):
+        raise NotFound("File not found.")
+
+    content_type, _ = mimetypes.guess_type(file_name)
+    content_type = content_type or "application/octet-stream"
+
+    file_object = file_field.open("rb")
+
+    return FileResponse(
+        file_object,
+        as_attachment=True,
+        filename=file_name.rsplit("/", 1)[-1],
+        content_type=content_type,
+    )
 
 
 class JobApplicationViewSet(viewsets.ModelViewSet):
@@ -26,6 +53,24 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="download-resume"
+    )
+    def download_resume(self, request, pk=None):
+        application = self.get_object()
+        return download_file_response(application.resume_file)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="download-cover-letter"
+    )
+    def download_cover_letter(self, request, pk=None):
+        application = self.get_object()
+        return download_file_response(application.cover_letter_file)
+
 
 class AttachmentViewSet(viewsets.ModelViewSet):
     serializer_class = AttachmentSerializer
@@ -35,6 +80,15 @@ class AttachmentViewSet(viewsets.ModelViewSet):
         return Attachment.objects.filter(
             application__user=self.request.user
         ).order_by("-uploaded_at")
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="download"
+    )
+    def download(self, request, pk=None):
+        attachment = self.get_object()
+        return download_file_response(attachment.file)
 
     def perform_destroy(self, instance):
         file_field = instance.file
@@ -55,6 +109,8 @@ class FollowUpViewSet(viewsets.ModelViewSet):
         return FollowUp.objects.filter(
             application__user=self.request.user
         ).order_by("-follow_up_date")
+
+
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]

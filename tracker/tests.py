@@ -561,3 +561,175 @@ class NotificationAPITests(TestCase):
 
         other_notification.refresh_from_db()
         self.assertFalse(other_notification.is_read)
+
+class SecureFileDownloadAPITests(TestCase):
+
+    def setUp(self):
+        self.media_temp_dir = tempfile.TemporaryDirectory()
+        self.media_override = override_settings(
+            MEDIA_ROOT=self.media_temp_dir.name
+        )
+        self.media_override.enable()
+
+        User = get_user_model()
+
+        self.user = User.objects.create_user(
+            username="downloaduser",
+            password="testpass123"
+        )
+
+        self.other_user = User.objects.create_user(
+            username="otherdownloaduser",
+            password="testpass123"
+        )
+
+        self.application = JobApplication.objects.create(
+            user=self.user,
+            candidate_name="Test Candidate",
+            company="Test Company",
+            role="Developer",
+            legacy_id="download-application-1"
+        )
+
+        self.other_application = JobApplication.objects.create(
+            user=self.other_user,
+            candidate_name="Other Candidate",
+            company="Other Company",
+            role="Designer",
+            legacy_id="download-application-2"
+        )
+
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+        self.application.resume_file.save(
+            "private-resume.pdf",
+            SimpleUploadedFile(
+                "private-resume.pdf",
+                b"Private resume content",
+                content_type="application/pdf"
+            ),
+            save=True
+        )
+
+        self.application.cover_letter_file.save(
+            "private-cover-letter.pdf",
+            SimpleUploadedFile(
+                "private-cover-letter.pdf",
+                b"Private cover letter content",
+                content_type="application/pdf"
+            ),
+            save=True
+        )
+
+        self.attachment = Attachment.objects.create(
+            application=self.application,
+            file=SimpleUploadedFile(
+                "private-attachment.pdf",
+                b"Private attachment content",
+                content_type="application/pdf"
+            ),
+            original_name="private-attachment.pdf",
+            file_size=26
+        )
+
+        self.other_attachment = Attachment.objects.create(
+            application=self.other_application,
+            file=SimpleUploadedFile(
+                "other-private.pdf",
+                b"Other user's private file",
+                content_type="application/pdf"
+            ),
+            original_name="other-private.pdf",
+            file_size=26
+        )
+
+    def test_user_can_download_own_resume(self):
+        response = self.client.get(
+            reverse(
+                "application-download-resume",
+                args=[self.application.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            b"".join(response.streaming_content),
+            b"Private resume content"
+        )
+
+    def test_user_can_download_own_cover_letter(self):
+        response = self.client.get(
+            reverse(
+                "application-download-cover-letter",
+                args=[self.application.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            b"".join(response.streaming_content),
+            b"Private cover letter content"
+        )
+
+    def test_user_can_download_own_attachment(self):
+        response = self.client.get(
+            reverse(
+                "attachment-download",
+                args=[self.attachment.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            b"".join(response.streaming_content),
+            b"Private attachment content"
+        )
+
+    def test_user_cannot_download_another_users_resume(self):
+        response = self.client.get(
+            reverse(
+                "application-download-resume",
+                args=[self.other_application.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_user_cannot_download_another_users_cover_letter(self):
+        response = self.client.get(
+            reverse(
+                "application-download-cover-letter",
+                args=[self.other_application.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_user_cannot_download_another_users_attachment(self):
+        response = self.client.get(
+            reverse(
+                "attachment-download",
+                args=[self.other_attachment.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_anonymous_user_cannot_download_files(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get(
+            reverse(
+                "application-download-resume",
+                args=[self.application.id]
+            )
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+
+    def tearDown(self):
+        self.media_override.disable()
+        self.media_temp_dir.cleanup()
+        super().tearDown()
